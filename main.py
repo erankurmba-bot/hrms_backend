@@ -50,39 +50,6 @@ os.makedirs(uploads_path, exist_ok=True)
 
 app.mount("/uploads", StaticFiles(directory=uploads_path), name="uploads")
 
-@app.post("/upload")
-async def upload(
-    request: Request,
-    title: str = Form(...),
-    className: str = Form(...),
-    subject: str = Form(...),
-    video: UploadFile = File(...)
-):
-    try:
-        filename = f"{uuid.uuid4()}{os.path.splitext(video.filename)[1]}"
-        file_path = os.path.join(uploads_path, filename)
-
-        with open(file_path, "wb") as f:
-            while chunk := await video.read(1024 * 1024):
-                f.write(chunk)
-
-        video_url = f"{request.base_url}uploads/{filename}"
-
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            "INSERT INTO TeacherVideos (Title, [Class], [Subject], VideoUrl) VALUES (?, ?, ?, ?)",
-            (title, className, subject, video_url)
-        )
-
-        conn.commit()
-        conn.close()
-
-        return {"message": "Uploaded successfully", "url": video_url}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 @app.post("/uploadfile")
 async def upload_file(
     request: Request,
@@ -118,12 +85,16 @@ async def upload_file(
 
         # save to DB
         conn = get_connection()
+
+        if not conn:
+            raise HTTPException(status_code=500, detail="DB connection failed")
+
         cursor = conn.cursor()
 
         cursor.execute("""
             INSERT INTO UploadedFiles
             (Title, Class, Subject, FileName, FileType, FileUrl)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """, (
             title,
             className,
@@ -134,6 +105,7 @@ async def upload_file(
         ))
 
         conn.commit()
+        cursor.close()
         conn.close()
 
         return {
@@ -154,6 +126,13 @@ async def upload_file(
 def get_videos():
     try:
         conn = get_connection()
+
+        if not conn:
+            raise HTTPException(
+                status_code=500,
+                detail="DB connection failed"
+            )
+
         cursor = conn.cursor()
 
         query = """
@@ -181,6 +160,7 @@ def get_videos():
             for row in rows
         ]
 
+        cursor.close()
         conn.close()
 
         return {
@@ -196,6 +176,13 @@ def get_videos():
 def get_videosByClass(className: str):
     try:
         conn = get_connection()
+
+        if not conn:
+            raise HTTPException(
+                status_code=500,
+                detail="DB connection failed"
+            )
+
         cursor = conn.cursor()
 
         query = """
@@ -209,7 +196,7 @@ def get_videosByClass(className: str):
                 FileType,
                 CreatedAt
             FROM dbo.UploadedFiles
-            WHERE [Class] = ?
+            WHERE [Class] = %s
             ORDER BY CreatedAt DESC
         """
 
@@ -224,6 +211,7 @@ def get_videosByClass(className: str):
             for row in rows
         ]
 
+        cursor.close()
         conn.close()
 
         return {
@@ -250,26 +238,43 @@ class LoginRequest(BaseModel):
 @app.post("/register")
 def register(data: RegisterRequest):
     conn = get_connection()
+
     if not conn:
         raise HTTPException(status_code=500, detail="DB not connected")
 
     cursor = conn.cursor()
 
+    # Insert user
     cursor.execute(
-        "INSERT INTO Users (Username, PasswordHash, ClassName) VALUES (?, ?, ?)",
+        """
+        INSERT INTO Users (Username, PasswordHash, ClassName)
+        VALUES (%s, %s, %s)
+        """,
         (data.username, data.password, data.className)
     )
+
     conn.commit()
 
-    cursor.execute("SELECT Id FROM Users WHERE Username=?", (data.username,))
+    # Get inserted user id
+    cursor.execute(
+        "SELECT Id FROM Users WHERE Username=%s",
+        (data.username,)
+    )
+
     user_id = cursor.fetchone()[0]
 
+    # Insert role mapping
     cursor.execute(
-        "INSERT INTO UserRoles (UserId, RoleId) VALUES (?, ?)",
+        """
+        INSERT INTO UserRoles (UserId, RoleId)
+        VALUES (%s, %s)
+        """,
         (user_id, data.role_id)
     )
 
     conn.commit()
+
+    cursor.close()
     conn.close()
 
     return {"message": "User registered successfully"}
