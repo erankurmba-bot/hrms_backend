@@ -1,5 +1,6 @@
 import os
 import uuid
+import pymssql
 import pyodbc
 from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -31,15 +32,15 @@ def create_token(data: dict, expire_minutes: int = 60):
 # ================= DB CONNECTION =================
 def get_connection():
     try:
-        conn = pyodbc.connect(
-      "DRIVER={ODBC Driver 17 for SQL Server};"
-        "SERVER=db53111.public.databaseasp.net ,1433;"
-        "DATABASE=db53111;"
-        "UID=db53111;"
-        "PWD=E=x57yC#o-4Z;"
-        "TrustServerCertificate=yes;"
+        conn = pymssql.connect(
+            server="db53111.public.databaseasp.net",
+            port=1433,
+            user="db53111",
+            password="E=x57yC#o-4Z",
+            database="db53111"
         )
         return conn
+
     except Exception as e:
         print("DB ERROR:", e)
         return None
@@ -277,10 +278,18 @@ def register(data: RegisterRequest):
 @app.post("/login")
 def login(data: LoginRequest):
     conn = get_connection()
+
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT Id, Username, PasswordHash, ClassName FROM Users WHERE Username=? AND PasswordHash=?",
+        """
+        SELECT Id, Username, PasswordHash, ClassName
+        FROM Users
+        WHERE Username=%s AND PasswordHash=%s
+        """,
         (data.username, data.password)
     )
 
@@ -291,12 +300,15 @@ def login(data: LoginRequest):
 
     user_id, username, password_hash, className = user
 
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT r.Name
         FROM Roles r
         JOIN UserRoles ur ON r.Id = ur.RoleId
-        WHERE ur.UserId=?
-    """, (user_id,))
+        WHERE ur.UserId=%s
+        """,
+        (user_id,)
+    )
 
     roles = [r[0] for r in cursor.fetchall()]
 
@@ -306,6 +318,9 @@ def login(data: LoginRequest):
         "roles": roles,
         "className": className
     })
+
+    cursor.close()
+    conn.close()
 
     return {
         "access_token": token,
