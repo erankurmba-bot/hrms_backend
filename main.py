@@ -1,7 +1,6 @@
 import os
 import uuid
 import pymssql
-import pyodbc
 from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
